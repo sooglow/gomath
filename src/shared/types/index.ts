@@ -1,4 +1,4 @@
-export type TabType = 'home' | 'ai-tutor' | 'notes' | 'profile' | 'admin';
+export type TabType = 'home' | 'ai-tutor' | 'tasks' | 'profile' | 'admin';
 
 export type MessageType = {
   id: string;
@@ -50,4 +50,36 @@ export type Explanation = {
 // problems 조회 시 explanations를 join한 타입
 export type ProblemWithExplanation = Problem & {
   explanations: Explanation | null;
+};
+
+export type UserRole = 'student' | 'teacher';
+
+export type Assignment = {
+  id: string;
+  due_date: string | null;
+  note: string | null;
+  class_name: string | null;
+  created_at: string;
+  completed: boolean;
+  problems: {
+    id: string;
+    book_id?: string;
+    page: string;
+    number: string;
+    topic: string | null;
+    books: { name: string } | null;
+  } | null;
+};
+export type UserStatus = 'pending' | 'approved' | 'rejected';
+
+export type UserProfile = {
+  id: string;
+  role: UserRole;
+  status: UserStatus;
+  name: string | null;
+  age: number | null;
+  school: string | null;
+  grade: string | null;
+  class_name: string | null;
+  created_at: string;
 };
