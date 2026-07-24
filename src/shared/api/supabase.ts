@@ -324,7 +324,8 @@ export type ParsedProblem = {
 };
 
 export async function parsePdf(file: File): Promise<ParsedProblem[]> {
-    const path = `uploads/${Date.now()}_${file.name}`;
+    const safeName = `${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`;
+    const path = `uploads/${safeName}`;
     const { error: uploadError } = await supabase.storage
         .from('pdf-uploads')
         .upload(path, file, { contentType: 'application/pdf' });
