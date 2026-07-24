@@ -44,10 +44,11 @@ export async function insertProblem(
     page: string,
     number: string,
     topic: string,
+    solutionPage?: number,
 ): Promise<Problem> {
     const { data, error } = await supabase
         .from("problems")
-        .insert({ book_id: bookId, page, number, topic })
+        .insert({ book_id: bookId, page, number, topic, solution_page: solutionPage ?? null })
         .select()
         .single();
     if (error) throw error;
@@ -392,4 +393,51 @@ export async function bulkSaveProblems(
     }
 
     return { saved, errors };
+}
+
+// ── 해설 PDF 청크 ─────────────────────────────────────
+
+export type SolutionChunk = {
+    id: string;
+    book_id: string;
+    storage_path: string;
+    page_start: number;
+    page_end: number;
+};
+
+export async function fetchSolutionChunks(bookId: string): Promise<SolutionChunk[]> {
+    const { data, error } = await supabase
+        .from('solution_chunks')
+        .select('*')
+        .eq('book_id', bookId)
+        .order('page_start');
+    if (error) throw error;
+    return data ?? [];
+}
+
+export async function uploadSolutionChunk(
+    bookId: string,
+    file: File,
+    pageStart: number,
+    pageEnd: number,
+): Promise<SolutionChunk> {
+    const safeName = `${bookId}/${Date.now()}_p${pageStart}-${pageEnd}.pdf`;
+    const { error: upErr } = await supabase.storage
+        .from('solution-pages')
+        .upload(safeName, file, { contentType: 'application/pdf' });
+    if (upErr) throw upErr;
+
+    const { data, error } = await supabase
+        .from('solution_chunks')
+        .insert({ book_id: bookId, storage_path: safeName, page_start: pageStart, page_end: pageEnd })
+        .select()
+        .single();
+    if (error) throw error;
+    return data;
+}
+
+export async function deleteSolutionChunk(chunk: SolutionChunk): Promise<void> {
+    await supabase.storage.from('solution-pages').remove([chunk.storage_path]);
+    const { error } = await supabase.from('solution_chunks').delete().eq('id', chunk.id);
+    if (error) throw error;
 }

@@ -8,12 +8,13 @@ import {
   parsePdf, bulkSaveProblems,
   fetchAllAssignments, insertAssignment, updateAssignment, deleteAssignment, fetchClassNames,
   fetchAssignmentCompletions,
+  fetchSolutionChunks, uploadSolutionChunk, deleteSolutionChunk,
   supabase,
 } from '../../../shared/api/supabase';
-import type { ParsedProblem, StudentCompletion } from '../../../shared/api/supabase';
+import type { ParsedProblem, StudentCompletion, SolutionChunk } from '../../../shared/api/supabase';
 import type { Assignment } from '../../../shared/types';
 
-type Step = 'books' | 'problems' | 'explanation' | 'users' | 'pdf' | 'tasks' | 'status';
+type Step = 'books' | 'problems' | 'explanation' | 'users' | 'pdf' | 'tasks' | 'status' | 'solution';
 
 export default function AdminPage() {
   const [step, setStep] = useState<Step>('books');
@@ -30,6 +31,7 @@ export default function AdminPage() {
   const [newPage, setNewPage] = useState('');
   const [newNumber, setNewNumber] = useState('');
   const [newTopic, setNewTopic] = useState('');
+  const [newSolutionPage, setNewSolutionPage] = useState('');
   const [problemLoading, setProblemLoading] = useState(false);
 
   // ── 해설 ──
@@ -62,6 +64,14 @@ export default function AdminPage() {
   const [completions, setCompletions] = useState<StudentCompletion[]>([]);
   const [statusLoading, setStatusLoading] = useState(false);
   const realtimeChannel = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // ── 해설 PDF 청크 ──
+  const [solutionBook, setSolutionBook] = useState<Book | null>(null);
+  const [solutionChunks, setSolutionChunks] = useState<SolutionChunk[]>([]);
+  const [solutionFile, setSolutionFile] = useState<File | null>(null);
+  const [solutionPageStart, setSolutionPageStart] = useState('');
+  const [solutionPageEnd, setSolutionPageEnd] = useState('');
+  const [solutionLoading, setSolutionLoading] = useState(false);
 
   // ── PDF ──
   const [pdfBook, setPdfBook] = useState<Book | null>(null);
@@ -151,11 +161,52 @@ export default function AdminPage() {
     if (!selectedBook || !newPage.trim() || !newNumber.trim()) return;
     setError('');
     try {
-      const problem = await insertProblem(selectedBook.id, newPage.trim(), newNumber.trim(), newTopic.trim());
+      const sp = newSolutionPage.trim() ? parseInt(newSolutionPage.trim()) : undefined;
+      const problem = await insertProblem(selectedBook.id, newPage.trim(), newNumber.trim(), newTopic.trim(), sp);
       setProblems((prev) => [...prev, problem]);
-      setNewPage(''); setNewNumber(''); setNewTopic('');
+      setNewPage(''); setNewNumber(''); setNewTopic(''); setNewSolutionPage('');
     } catch {
       setError('문항 추가 실패 (중복 확인)');
+    }
+  }
+
+  async function loadSolutionChunks(bookId: string) {
+    setSolutionLoading(true);
+    try {
+      const data = await fetchSolutionChunks(bookId);
+      setSolutionChunks(data);
+    } catch {
+      setError('해설 청크 로드 실패');
+    } finally {
+      setSolutionLoading(false);
+    }
+  }
+
+  async function handleUploadSolutionChunk() {
+    if (!solutionBook || !solutionFile || !solutionPageStart || !solutionPageEnd) return;
+    setSolutionLoading(true);
+    setError('');
+    try {
+      const chunk = await uploadSolutionChunk(
+        solutionBook.id, solutionFile,
+        parseInt(solutionPageStart), parseInt(solutionPageEnd),
+      );
+      setSolutionChunks((prev) => [...prev, chunk].sort((a, b) => a.page_start - b.page_start));
+      setSolutionFile(null); setSolutionPageStart(''); setSolutionPageEnd('');
+    } catch (e) {
+      setError('업로드 실패: ' + (e instanceof Error ? e.message : ''));
+    } finally {
+      setSolutionLoading(false);
+    }
+  }
+
+  async function handleDeleteSolutionChunk(chunk: SolutionChunk) {
+    if (!confirm('해설 청크를 삭제할까요?')) return;
+    try {
+      await deleteSolutionChunk(chunk);
+      setSolutionChunks((prev) => prev.filter((c) => c.id !== chunk.id));
+    } catch {
+      setError('삭제 실패');
     }
   }
 
@@ -369,6 +420,7 @@ export default function AdminPage() {
           { key: 'explanation', label: '해설' },
           { key: 'tasks', label: '📋과제' },
           { key: 'status', label: '📊과제현황' },
+          { key: 'solution', label: '📖해설PDF' },
           { key: 'pdf', label: '📄PDF' },
           { key: 'users', label: '👥승인' },
         ] as { key: Step; label: string }[]).map(({ key, label }) => (
@@ -378,6 +430,7 @@ export default function AdminPage() {
               setStep(key);
               if (key === 'users') loadUsers();
               if (key === 'tasks' || key === 'status') loadAssignments();
+              if (key === 'solution' && solutionBook) loadSolutionChunks(solutionBook.id);
             }}
             className={`flex-1 py-2.5 text-[11px] font-semibold transition-colors border-b-2 ${
               step === key ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-400'
@@ -499,6 +552,16 @@ export default function AdminPage() {
                       value={newTopic}
                       onChange={(e) => setNewTopic(e.target.value)}
                       placeholder="예: 이차방정식"
+                      className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-1">해설집 페이지 <span className="text-slate-300">(선택)</span></label>
+                    <input
+                      value={newSolutionPage}
+                      onChange={(e) => setNewSolutionPage(e.target.value)}
+                      placeholder="예: 8"
+                      type="number"
                       className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-400"
                     />
                   </div>
@@ -837,6 +900,96 @@ export default function AdminPage() {
                     ))}
                   </>
                 )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── 해설 PDF 청크 업로드 ── */}
+        {step === 'solution' && (
+          <>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+              <p className="text-xs font-bold text-slate-600">교재 선택</p>
+              <select
+                value={solutionBook?.id ?? ''}
+                onChange={(e) => {
+                  const b = books.find((b) => b.id === e.target.value) ?? null;
+                  setSolutionBook(b);
+                  if (b) loadSolutionChunks(b.id);
+                  else setSolutionChunks([]);
+                }}
+                className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-400"
+              >
+                <option value="">-- 교재 선택 --</option>
+                {books.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+
+            {solutionBook && (
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+                <p className="text-xs font-bold text-slate-600">해설 PDF 청크 업로드</p>
+                <p className="text-[10px] text-slate-400">분할된 PDF 파일과 해당 페이지 범위를 입력하세요</p>
+                <input
+                  type="file" accept=".pdf"
+                  onChange={(e) => setSolutionFile(e.target.files?.[0] ?? null)}
+                  className="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-1">시작 페이지</label>
+                    <input
+                      type="number" value={solutionPageStart}
+                      onChange={(e) => setSolutionPageStart(e.target.value)}
+                      placeholder="1"
+                      className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-400 mb-1">끝 페이지</label>
+                    <input
+                      type="number" value={solutionPageEnd}
+                      onChange={(e) => setSolutionPageEnd(e.target.value)}
+                      placeholder="12"
+                      className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-400"
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={handleUploadSolutionChunk}
+                  disabled={!solutionFile || !solutionPageStart || !solutionPageEnd || solutionLoading}
+                  className="w-full py-2.5 bg-emerald-500 text-white text-xs font-bold rounded-xl disabled:opacity-40 hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
+                >
+                  {solutionLoading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                      </svg>
+                      업로드 중...
+                    </>
+                  ) : '업로드'}
+                </button>
+              </div>
+            )}
+
+            {solutionBook && (
+              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                <p className="text-xs font-bold text-slate-600 px-4 pt-4 pb-2">
+                  업로드된 청크 ({solutionChunks.length}개)
+                </p>
+                {solutionLoading && <div className="h-12 flex items-center justify-center text-xs text-slate-400">로딩 중...</div>}
+                {!solutionLoading && solutionChunks.length === 0 && (
+                  <p className="text-xs text-slate-400 text-center py-4">업로드된 해설 파일 없음</p>
+                )}
+                {solutionChunks.map((c) => (
+                  <div key={c.id} className="flex items-center justify-between px-4 py-3 border-t border-slate-100">
+                    <span className="text-xs text-slate-700">p{c.page_start} ~ p{c.page_end}</span>
+                    <button
+                      onClick={() => handleDeleteSolutionChunk(c)}
+                      className="text-xs text-red-400 hover:text-red-600 px-2 py-1"
+                    >삭제</button>
+                  </div>
+                ))}
               </div>
             )}
           </>
