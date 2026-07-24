@@ -7,29 +7,37 @@ const corsHeaders = {
 };
 
 async function uploadToGeminiFiles(pdfBytes: ArrayBuffer, apiKey: string): Promise<string> {
-  const boundary = 'boundary' + Date.now();
-  const metaPart = new TextEncoder().encode(
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
-    `{"file":{"display_name":"document.pdf"}}\r\n` +
-    `--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`
-  );
-  const endPart = new TextEncoder().encode(`\r\n--${boundary}--`);
-
-  const body = new Uint8Array(metaPart.byteLength + pdfBytes.byteLength + endPart.byteLength);
-  body.set(metaPart, 0);
-  body.set(new Uint8Array(pdfBytes), metaPart.byteLength);
-  body.set(endPart, metaPart.byteLength + pdfBytes.byteLength);
-
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+  // Step 1: resumable upload 세션 시작
+  const initRes = await fetch(
+    `https://generativelanguage.googleapis.com/resumable/upload/v1beta/files?key=${apiKey}`,
     {
       method: 'POST',
-      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-      body,
+      headers: {
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': String(pdfBytes.byteLength),
+        'X-Goog-Upload-Header-Content-Type': 'application/pdf',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ file: { display_name: 'document.pdf' } }),
     }
   );
-  if (!res.ok) throw new Error(`Gemini Files upload (${res.status}): ${await res.text()}`);
-  const { file } = await res.json();
+  if (!initRes.ok) throw new Error(`Gemini Files init (${initRes.status}): ${await initRes.text()}`);
+  const uploadUrl = initRes.headers.get('X-Goog-Upload-URL');
+  if (!uploadUrl) throw new Error('Upload URL 없음');
+
+  // Step 2: 파일 업로드
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Length': String(pdfBytes.byteLength),
+      'X-Goog-Upload-Offset': '0',
+      'X-Goog-Upload-Command': 'upload, finalize',
+    },
+    body: pdfBytes,
+  });
+  if (!uploadRes.ok) throw new Error(`Gemini Files upload (${uploadRes.status}): ${await uploadRes.text()}`);
+  const { file } = await uploadRes.json();
   return file.uri;
 }
 
