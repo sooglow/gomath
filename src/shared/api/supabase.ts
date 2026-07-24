@@ -336,6 +336,7 @@ export async function parsePdf(file: File): Promise<ParsedProblem[]> {
             body: { storage_path: path },
         });
         if (error) throw error;
+        if (data?.error) throw new Error(data.error);
         return data.problems ?? [];
     } finally {
         await supabase.storage.from('pdf-uploads').remove([path]);
