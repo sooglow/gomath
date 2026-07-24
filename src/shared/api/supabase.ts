@@ -323,12 +323,22 @@ export type ParsedProblem = {
     hint_steps: string[];
 };
 
-export async function parsePdf(pdfBase64: string): Promise<ParsedProblem[]> {
-    const { data, error } = await supabase.functions.invoke('parse-pdf', {
-        body: { pdf_base64: pdfBase64 },
-    });
-    if (error) throw error;
-    return data.problems ?? [];
+export async function parsePdf(file: File): Promise<ParsedProblem[]> {
+    const path = `uploads/${Date.now()}_${file.name}`;
+    const { error: uploadError } = await supabase.storage
+        .from('pdf-uploads')
+        .upload(path, file, { contentType: 'application/pdf' });
+    if (uploadError) throw uploadError;
+
+    try {
+        const { data, error } = await supabase.functions.invoke('parse-pdf', {
+            body: { storage_path: path },
+        });
+        if (error) throw error;
+        return data.problems ?? [];
+    } finally {
+        await supabase.storage.from('pdf-uploads').remove([path]);
+    }
 }
 
 export async function bulkSaveProblems(

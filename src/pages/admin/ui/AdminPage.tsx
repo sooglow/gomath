@@ -295,19 +295,13 @@ export default function AdminPage() {
 
   async function handleParsePdf() {
     if (!pdfBook || !pdfFile) return;
-    if (pdfFile.size > 15 * 1024 * 1024) { setError('PDF 파일이 너무 커요 (최대 15MB)'); return; }
+    if (pdfFile.size > 20 * 1024 * 1024) { setError('PDF 파일이 너무 커요 (최대 20MB)'); return; }
     setError('');
     setPdfLoading(true);
     setPdfResults(null);
     setPdfSaveResult(null);
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve((reader.result as string).split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(pdfFile);
-      });
-      const results = await parsePdf(base64);
+      const results = await parsePdf(pdfFile);
       setPdfResults(results);
       setPdfChecked(new Set(results.map((_, i) => i)));
     } catch (e) {

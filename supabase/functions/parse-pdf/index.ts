@@ -1,10 +1,23 @@
 // @ts-nocheck — Deno Edge Function
-import { GoogleGenerativeAI } from 'npm:@google/generative-ai';
+import { createClient } from 'npm:@supabase/supabase-js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+async function uploadToGeminiFiles(pdfBytes: ArrayBuffer, apiKey: string): Promise<string> {
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const form = new FormData();
+  form.append('file', blob, 'document.pdf');
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+    { method: 'POST', body: form }
+  );
+  if (!res.ok) throw new Error(`Gemini Files upload failed: ${await res.text()}`);
+  const { file } = await res.json();
+  return file.uri;
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -12,17 +25,25 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { pdf_base64 } = await req.json();
+    const { storage_path } = await req.json();
+    const apiKey = Deno.env.get('GEMINI_API_KEY')!;
 
-    const genAI = new GoogleGenerativeAI(Deno.env.get('GEMINI_API_KEY')!);
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
-      generationConfig: {
-        temperature: 0,
-        responseMimeType: 'application/json',
-      },
-    });
+    // Storage에서 PDF 다운로드
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
+    const { data: fileBlob, error: dlError } = await supabaseAdmin.storage
+      .from('pdf-uploads')
+      .download(storage_path);
+    if (dlError) throw new Error(`Storage 다운로드 실패: ${dlError.message}`);
 
+    const pdfBytes = await fileBlob.arrayBuffer();
+
+    // Gemini Files API에 업로드
+    const fileUri = await uploadToGeminiFiles(pdfBytes, apiKey);
+
+    // Gemini로 분석
     const prompt = `이 수학 교사용 해설집 PDF를 분석해서 각 문제의 정보를 추출해줘.
 
 반드시 아래 JSON 형식으로만 반환해:
@@ -47,12 +68,24 @@ Deno.serve(async (req) => {
 - key_concepts: 핵심 개념 2~4개 배열
 - hint_steps: 학생에게 줄 단계별 힌트 3~4개 (정답 직접 언급 금지, 다음 단계를 생각하게 하는 힌트)`;
 
-    const result = await model.generateContent([
-      { inlineData: { data: pdf_base64, mimeType: 'application/pdf' } },
-      prompt,
-    ]);
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { fileData: { mimeType: 'application/pdf', fileUri } },
+            { text: prompt },
+          ]}],
+          generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+        }),
+      }
+    );
+    if (!geminiRes.ok) throw new Error(`Gemini API 오류: ${await geminiRes.text()}`);
+    const geminiData = await geminiRes.json();
+    const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 
-    const text = result.response.text();
     let parsed;
     try {
       parsed = JSON.parse(text);
